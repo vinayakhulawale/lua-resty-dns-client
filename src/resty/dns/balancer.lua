@@ -461,15 +461,55 @@ function objHost:queryDns(cacheOnly)
     end
   end
 
+  do
+    local to_json = require("cjson").encode
+    local data = type(self.lastQuery) == "table" and to_json(self.lastQuery) or
+                 tostring(self.lastQuery)
+    ngx_log(ngx_DEBUG, self.log_prefix, "queried, lastQuery: ", data)
+    data = type(newQuery) == "table" and to_json(newQuery) or
+           tostring(newQuery)
+    ngx_log(ngx_DEBUG, self.log_prefix, "queried, newQuery: ", data)
+  end
+
+  local validate_and_log = function(msg)
+    msg = self.log_prefix .. msg
+    local b = self.balancer
+    ngx_log(ngx_DEBUG, msg, "#hosts: ", #(b.hosts or {}))
+    ngx_log(ngx_DEBUG, msg, "balancer weight: ", b.weight)
+    ngx_log(ngx_DEBUG, msg, "#unassignedWheelIndices: ", #(b.unassignedWheelIndices or {}))
+    if #b.unassignedWheelIndices ~= b.wheelSize then
+      for i = 1, b.wheelSize do
+        if b.wheel[i] == nil then
+          ngx_log(ngx_ERR, msg, "unassigned slot: ", tostring(i))
+        end
+      end
+    else
+      ngx_log(ngx_DEBUG, msg, "unassigned slot: all of them")
+    end
+    for i, host in pairs(b.hosts or {}) do
+      ngx_log(ngx_DEBUG, msg, "hostname(", i,")=", host.hostname, " weight=", host.weight, " nodeWeight=", host.nodeWeight)
+    end
+    for _, addr, host in b:addressIter() do
+      local addrmsg = host.hostname .."="..tostring(addr.ip)..":"..tostring(addr.port).." "
+      local cnt = 0
+      for _ in pairs(addr.indices) do
+        cnt = cnt + 1
+      end
+      ngx_log(cnt == #addr.indices and ngx_DEBUG or ngx_ERR,
+        msg, addrmsg, "length=", #addr.indices, " count=", cnt, " weight=", addr.weight)
+    end
+  end
+
   self.lastQuery = newQuery
   self.lastSorted = newSorted
 
   if dirty then -- changes imply we need to redistribute indices
     ngx_log(ngx_DEBUG, self.log_prefix, "updating wheel based on dns changes for ",
             self.hostname)
-
     -- recalculate to move indices of disabled addresses
+    validate_and_log("before: ")
     self.balancer:redistributeIndices()
+    validate_and_log("after: ")
     -- delete addresses previously disabled
     self:deleteAddresses()
   end
