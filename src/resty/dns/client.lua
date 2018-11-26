@@ -30,6 +30,9 @@ local time = ngx.now
 local log = ngx.log
 local WARN = ngx.WARN
 local DEBUG = ngx.DEBUG
+--=[[
+  DEBUG = ngx.WARN  -- raise the level when debugging
+--]]
 local PREFIX = "[dns-client] "
 local timer_at = ngx.timer.at
 
@@ -82,7 +85,7 @@ _M.TYPE_LAST = -1
 -- ==============================================
 -- to be enabled manually by doing a replace-all on the
 -- long comment start.
---[[
+--=[[
 local json = require("cjson").encode
 
 local function fquery(item)
@@ -130,13 +133,13 @@ local cachelookup = function(qname, qtype)
     cached.touch = now
     if (cached.expire < now) then
       cached.expired = true
-      --[[
+      --=[[
       log(DEBUG, PREFIX, "cache get (stale): ", key, " ", frecord(cached))
     else
       log(DEBUG, PREFIX, "cache get: ", key, " ", frecord(cached))
       --]]
     end
-    --[[
+    --=[[
   else
     log(DEBUG, PREFIX, "cache get (miss): ", key)
     --]]
@@ -184,7 +187,7 @@ local cacheinsert = function(entry, qname, qtype)
       -- an error, but no 'name error' (3)
       if (cachelookup(qname, qtype) or empty)[1] then
         -- we still have a stale record with data, so we're not replacing that
-        --[[
+        --=[[
         log(DEBUG, PREFIX, "cache set (skip on name error): ", key, " ", frecord(entry))
         --]]
         return
@@ -201,7 +204,7 @@ local cacheinsert = function(entry, qname, qtype)
       -- empty record
       if (cachelookup(qname, qtype) or empty)[1] then
         -- we still have a stale record with data, so we're not replacing that
-        --[[
+        --=[[
         log(DEBUG, PREFIX, "cache set (skip on empty): ", key, " ", frecord(entry))
         --]]
         return
@@ -216,7 +219,7 @@ local cacheinsert = function(entry, qname, qtype)
     entry.expire = now + ttl
     entry.expired = false
     lru_ttl = ttl + staleTtl
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "cache set (new): ", key, " ", frecord(entry))
     --]]
 
@@ -225,7 +228,7 @@ local cacheinsert = function(entry, qname, qtype)
     -- must calculate remaining ttl, cannot get it from lrucache
     key = (qtype or e1.type) .. ":" .. (qname or e1.name)
     lru_ttl = entry.expire - now + staleTtl
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "cache set (existing): ", key, " ", frecord(entry))
     --]]
   end
@@ -233,7 +236,7 @@ local cacheinsert = function(entry, qname, qtype)
   if lru_ttl <= 0 then
     -- item is already expired, so we do not add it
     dnscache:delete(key)
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "cache set (delete on expired): ", key, " ", frecord(entry))
     --]]
     return
@@ -283,14 +286,14 @@ local function cachesetsuccess(qname, qtype)
   if not validType then
     -- the qtype is not in the list, so we're not setting it as the
     -- success type
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "cache set success (skip on bad type): ", qname, ", ", qtype)
     --]]
     return false
   end
 
   dnscache:set(qname, qtype)
-  --[[
+  --=[[
   log(DEBUG, PREFIX, "cache set success: ", qname, " = ", qtype)
   --]]
   return true
@@ -688,18 +691,18 @@ local function executeQuery(premature, item)
   if not r then
     item.result, item.err = r, "failed to create a resolver: " .. err
   else
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "Query executing: ", item.qname, ":", item.r_opts.qtype, " ", fquery(item))
     --]]
     try_status(item.try_list, "querying")
     item.result, item.err = r:query(item.qname, item.r_opts)
     if item.result then
-      --[[
+      --=[[
       log(DEBUG, PREFIX, "Query answer: ", item.qname, ":", item.r_opts.qtype, " ", fquery(item),
               " ", frecord(item.result))
       --]]
       parseAnswer(item.qname, item.r_opts.qtype, item.result, item.try_list)
-      --[[
+      --=[[
       log(DEBUG, PREFIX, "Query parsed answer: ", item.qname, ":", item.r_opts.qtype, " ", fquery(item),
               " ", frecord(item.result))
     else
@@ -712,6 +715,9 @@ local function executeQuery(premature, item)
   -- 1) stop new ones from adding to our lock/semaphore
   queue[item.key] = nil
   -- 2) release all waiting threads
+  --=[[
+  log(DEBUG, PREFIX, "Query release: ", -item.semaphore:count()," semaphore waiters")
+  --]]
   item.semaphore:post(math_max(item.semaphore:count() * -1, 1))
   item.semaphore = nil
 end
@@ -729,7 +735,7 @@ local function asyncQuery(qname, r_opts, try_list)
   local key = qname..":"..r_opts.qtype
   local item = queue[key]
   if item then
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "Query async (exists): ", key, " ", fquery(item))
     --]]
     try_status(try_list, "in progress (async)")
@@ -750,7 +756,7 @@ local function asyncQuery(qname, r_opts, try_list)
     queue[key] = nil
     return nil, "asyncQuery failed to create timer: "..err
   end
-  --[[
+  --=[[
   log(DEBUG, PREFIX, "Query async (scheduled): ", key, " ", fquery(item))
   --]]
   try_status(try_list, "scheduled")
@@ -777,25 +783,28 @@ local function syncQuery(qname, r_opts, try_list, count)
   if not item then
     local err
     item, err = asyncQuery(qname, r_opts, try_list)
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "Query sync (new): ", key, " ", fquery(item)," count=", count)
     --]]
     if not item then
       return item, err, try_list
     end
   else
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "Query sync (exists): ", key, " ", fquery(item)," count=", count)
     --]]
     try_status(try_list, "in progress (sync)")
   end
 
   -- block and wait for the async query to complete
+  --=[[
+  log(DEBUG, PREFIX, "Query sync: semaphore wait for results, seconds:", poolMaxWait)
+  --]]
   local ok, err = item.semaphore:wait(poolMaxWait)
   if ok and item.result then
     -- we were released, and have a query result from the
     -- other thread, so all is well, return it
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "Query sync result: ", key, " ", fquery(item),
            " result: ", json({ result = item.result, err = item.err}))
     --]]
@@ -806,7 +815,7 @@ local function syncQuery(qname, r_opts, try_list, count)
   -- go retry
   try_status(try_list, "try "..count.." error: "..(item.err or err or "unknown"))
   if count > poolMaxRetry then
-    --[[
+    --=[[
     log(DEBUG, PREFIX, "Query sync (fail): ", key, " ", fquery(item)," retries exceeded. count=", count)
     --]]
     return nil, "dns lookup pool exceeded retries (" ..
@@ -817,7 +826,7 @@ local function syncQuery(qname, r_opts, try_list, count)
   -- don't block on the same thread again, so remove it from the queue
   if queue[key] == item then queue[key] = nil end
 
-  --[[
+  --=[[
   log(DEBUG, PREFIX, "Query sync (fail): ", key, " ", fquery(item)," retrying. count=", count)
   --]]
   return syncQuery(qname, r_opts, try_list, count + 1)
@@ -839,7 +848,7 @@ local function lookup(qname, r_opts, dnsCacheOnly, try_list)
     --not found in cache
     if dnsCacheOnly then
       -- we can't do a lookup, so return an error
-      --[[
+      --=[[
       log(DEBUG, PREFIX, "Lookup, cache only failure: ", qname, " = ", r_opts.qtype)
       --]]
       try_list = try_add(try_list, qname, r_opts.qtype, "cache only lookup failed")
