@@ -41,6 +41,12 @@ History
 
 Versioning is strictly based on [Semantic Versioning](https://semver.org/)
 
+### x.x.x (x-xxx-2019)
+
+- Added: keep track of unavailable weight. Added the `isHealthy` method to
+  return health, overall weight and unavailable weight. Health is determined
+  based on the new property `healthThreshold`.
+
 ### 3.0.2 (8-Mar-2019) Bugfix
 
 - Fix: callback for adding an address did not pass the address object, but
